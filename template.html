@@ -549,11 +549,14 @@
   }
   // --- кнопка «Обновить»: перезагружает страницу → подтягивает последнюю
   // опубликованную сборку (планировщик публикует свежую каждый час в торговые часы)
-  // На GitHub Pages страница сама себе хозяйка — обычная перезагрузка
+  // Перезагрузка с обходом кэша GitHub Pages (max-age=600):
+  // уникальный параметр в URL заставляет CDN отдать свежую копию
   const rb = $("refresh-btn");
   rb.addEventListener("click", () => {
     rb.disabled = true; rb.textContent = "Обновляю…";
-    location.reload();
+    const u = new URL(location.href);
+    u.searchParams.set("r", String(Date.now()));
+    location.replace(u.toString());
   });
 
   // --- график SPY с EMA 10/20/50
