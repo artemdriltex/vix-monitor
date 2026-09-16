@@ -26,8 +26,11 @@ def main():
 
     triggered = data.get("triggered", [])
     if not triggered:
-        print("telegram: алертов нет")
-        return
+        if os.environ.get("TG_TEST") == "true":
+            triggered = ["ТЕСТ: связь работает, алерты будут приходить сюда"]
+        else:
+            print("telegram: алертов нет")
+            return
 
     s = data.get("status", {})
     vx1, vx2 = s.get("VX1") or {}, s.get("VX2") or {}

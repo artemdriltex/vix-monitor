@@ -4,7 +4,12 @@ on:
   schedule:
     # каждые 30 минут, пн–пт, 13:00–20:30 UTC (≈ 9:00–16:30 по Нью-Йорку летом)
     - cron: "*/30 13-20 * * 1-5"
-  workflow_dispatch: {}   # ручной запуск кнопкой Run workflow
+  workflow_dispatch:
+    inputs:
+      test_telegram:
+        description: "Отправить тестовое сообщение в Telegram"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -36,6 +41,7 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TG_TEST: ${{ inputs.test_telegram }}
         run: python3 telegram_alert.py alerts_out.json
 
       - name: Коммит состояния
