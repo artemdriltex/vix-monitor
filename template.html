@@ -251,7 +251,12 @@
 <script id="data" type="application/json">__DATA_JSON__</script>
 <script>
 (function () {
-  const D = JSON.parse(document.getElementById("data").textContent);
+  let DATA = JSON.parse(document.getElementById("data").textContent);
+  let bootDrawAll = null;
+  let liveStamp = null; // время живого обновления котировок по кнопке
+
+  function boot() {
+  const D = DATA;
   const $ = id => document.getElementById(id);
   const fmt = (n, d = 2) => n == null ? "—" : n.toLocaleString("ru-RU",
       { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -262,7 +267,11 @@
       { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   const fmtDT = d => d.toLocaleString("ru-RU",
       { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-  if (D.quotes.VIX && D.quotes.VIX.t) {
+  $("stale").textContent = "";
+  if (liveStamp) {
+    $("data-time").textContent = fmtDT(liveStamp);
+    $("stale").textContent = " (живые котировки)";
+  } else if (D.quotes.VIX && D.quotes.VIX.t) {
     const dt = new Date(D.quotes.VIX.t * 1000);
     $("data-time").textContent = fmtDT(dt);
     if (Date.now() - dt.getTime() > 60 * 60 * 1000)
@@ -274,14 +283,15 @@
   // --- котировки
   const q = D.quotes;
   const pct = k => (q[k] && q[k].prev) ? (q[k].price / q[k].prev - 1) * 100 : null;
-  const chgHtml = (k, inv) => {
+  const chgHtml = (k, inv, id) => {
     const p = pct(k);
-    if (p == null) return "";
+    const idAttr = id ? ` id="${id}"` : "";
+    if (p == null) return `<span${idAttr} class="chg num"></span>`;
     const cls = (p >= 0 ? "up" : "down") + (inv ? " inv" : "");
-    return `<span class="chg num ${cls}">${p >= 0 ? "+" : ""}${fmt(p)}%</span>`;
+    return `<span${idAttr} class="chg num ${cls}">${p >= 0 ? "+" : ""}${fmt(p)}%</span>`;
   };
   $("vix-price").textContent = fmt(q.VIX.price);
-  $("vix-chg").outerHTML = chgHtml("VIX");
+  $("vix-chg").outerHTML = chgHtml("VIX", false, "vix-chg");
 
   const qdefs = [
     ["UVXY", "1.5x лонг VIX-фьючерсы", false],
@@ -485,7 +495,7 @@
     cls = "good"; title = "Зелёный режим — спокойный рынок";
     sub = `VIX ${fmt(v0, 1)}, контанго VX1→VX2 +${fmt(strength, 1)}%, декай положительный — структурные стратегии в штатном режиме.`;
   }
-  b.classList.add(cls); $("banner-title").textContent = title; $("banner-sub").textContent = sub;
+  b.className = "banner " + cls; $("banner-title").textContent = title; $("banner-sub").textContent = sub;
 
   // --- график
   const cv = $("chart"), ctx = cv.getContext("2d");
@@ -549,22 +559,12 @@
   }
   // --- кнопка «Обновить»: перезагружает страницу → подтягивает последнюю
   // опубликованную сборку (планировщик публикует свежую каждый час в торговые часы)
-  // Перезагрузка с обходом кэша GitHub Pages (max-age=600):
-  // уникальный параметр в URL заставляет CDN отдать свежую копию
-  const rb = $("refresh-btn");
-  rb.addEventListener("click", () => {
-    rb.disabled = true; rb.textContent = "Обновляю…";
-    const u = new URL(location.href);
-    u.searchParams.set("r", String(Date.now()));
-    location.replace(u.toString());
-  });
-
   // --- график SPY с EMA 10/20/50
   const spyHist = D.history.SPY || [];
   const spyCloses = spyHist.map(h => h[1]);
   if (q.SPY) {
     $("spy-price").textContent = fmt(q.SPY.price);
-    $("spy-chg").outerHTML = chgHtml("SPY", true);
+    $("spy-chg").outerHTML = chgHtml("SPY", true, "spy-chg");
   }
   function emaSeries(vals, n) {
     const k = 2 / (n + 1), out = new Array(vals.length).fill(null);
@@ -636,8 +636,50 @@
 
   function drawAll() { draw(); drawSpy(); }
   drawAll();
-  window.addEventListener("load", drawAll);
-  let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(drawAll, 150); });
-  new MutationObserver(drawAll).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  bootDrawAll = drawAll;
+  }
+
+  boot();
+  window.addEventListener("load", () => bootDrawAll && bootDrawAll());
+  let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => bootDrawAll && bootDrawAll(), 150); });
+  new MutationObserver(() => bootDrawAll && bootDrawAll()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  // --- кнопка «Обновить»: живые котировки CBOE через CORS-прокси и полный
+  // пересчёт панели; при сбое прокси — перезагрузка с обходом кэша Pages
+  const rb = document.getElementById("refresh-btn");
+  const PROXY = u => "https://api.allorigins.win/get?url=" + encodeURIComponent(u);
+  async function cboeQuote(sym) {
+    const opts = { cache: "no-store" };
+    if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) opts.signal = AbortSignal.timeout(15000);
+    const r = await fetch(PROXY("https://cdn.cboe.com/api/global/delayed_quotes/quotes/" + sym + ".json"), opts);
+    if (!r.ok) throw new Error("proxy " + r.status);
+    const wrapped = await r.json();
+    const d = JSON.parse(wrapped.contents).data;
+    if (!d || typeof d.current_price !== "number") throw new Error("no data " + sym);
+    return d;
+  }
+  rb.addEventListener("click", async () => {
+    rb.disabled = true; rb.textContent = "Обновляю…";
+    try {
+      const symMap = { VIX: "_VIX", VIX9D: "_VIX9D", VIX3M: "_VIX3M", UVXY: "UVXY", SVIX: "SVIX", SPY: "SPY" };
+      const jobs = Object.entries(symMap).map(async ([k, s]) => {
+        const d = await cboeQuote(s);
+        if (DATA.quotes[k]) DATA.quotes[k].price = d.current_price;
+      });
+      (DATA.vx || []).forEach(f => jobs.push((async () => {
+        const d = await cboeQuote(f.sym);
+        f.price = d.current_price;
+        if (typeof d.prev_day_close === "number") f.prevClose = d.prev_day_close;
+      })()));
+      await Promise.all(jobs);
+      liveStamp = new Date();
+      boot();
+      rb.disabled = false; rb.textContent = "⟳ Обновить";
+    } catch (e) {
+      const u = new URL(location.href);
+      u.searchParams.set("r", String(Date.now()));
+      location.replace(u.toString());
+    }
+  });
 })();
 </script>
