@@ -1,0 +1,47 @@
+name: update-dashboard
+
+on:
+  schedule:
+    # каждые 30 минут, пн–пт, 13:00–20:30 UTC (≈ 9:00–16:30 по Нью-Йорку летом)
+    - cron: "*/30 13-20 * * 1-5"
+  workflow_dispatch: {}   # ручной запуск кнопкой Run workflow
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-dashboard
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Проверка алертов
+        run: python3 check_alerts.py > alerts_out.json && cat alerts_out.json
+
+      - name: Сборка дашборда
+        run: python3 build_dashboard.py
+
+      - name: Публикация в docs/ (GitHub Pages)
+        run: mkdir -p docs && cp dashboard.html docs/index.html
+
+      - name: Алерты в Telegram
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 telegram_alert.py alerts_out.json
+
+      - name: Коммит состояния
+        run: |
+          git config user.name "vix-monitor-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "auto: refresh $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push

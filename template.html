@@ -1,0 +1,642 @@
+<title>VIX Монитор — волатильность и сигналы</title>
+<style>
+  :root {
+    --bg: #F2F5F4; --surface: #FFFFFF; --surface2: #EAF0EF;
+    --ink: #1B2426; --muted: #5D6E70; --line: #D9E2E1;
+    --accent: #2E7D83; --accent-soft: rgba(46,125,131,.12);
+    --good: #2E8F5B; --good-bg: rgba(46,143,91,.10);
+    --warn: #B37F1F; --warn-bg: rgba(179,127,31,.12);
+    --bad: #C24B4B; --bad-bg: rgba(194,75,75,.10);
+    --chart-band: rgba(46,125,131,.10); --chart-grid: rgba(27,36,38,.07);
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg: #0D1416; --surface: #151E20; --surface2: #1C2729;
+    --ink: #E6ECEB; --muted: #8FA3A4; --line: #263335;
+    --accent: #58BDB9; --accent-soft: rgba(88,189,185,.14);
+    --good: #4CC38A; --good-bg: rgba(76,195,138,.12);
+    --warn: #E0B04E; --warn-bg: rgba(224,176,78,.13);
+    --bad: #E06C6C; --bad-bg: rgba(224,108,108,.12);
+    --chart-band: rgba(88,189,185,.13); --chart-grid: rgba(230,236,235,.07);
+  }}
+  :root[data-theme="dark"] {
+    --bg: #0D1416; --surface: #151E20; --surface2: #1C2729;
+    --ink: #E6ECEB; --muted: #8FA3A4; --line: #263335;
+    --accent: #58BDB9; --accent-soft: rgba(88,189,185,.14);
+    --good: #4CC38A; --good-bg: rgba(76,195,138,.12);
+    --warn: #E0B04E; --warn-bg: rgba(224,176,78,.13);
+    --bad: #E06C6C; --bad-bg: rgba(224,108,108,.12);
+    --chart-band: rgba(88,189,185,.13); --chart-grid: rgba(230,236,235,.07);
+  }
+  :root[data-theme="light"] {
+    --bg: #F2F5F4; --surface: #FFFFFF; --surface2: #EAF0EF;
+    --ink: #1B2426; --muted: #5D6E70; --line: #D9E2E1;
+    --accent: #2E7D83; --accent-soft: rgba(46,125,131,.12);
+    --good: #2E8F5B; --good-bg: rgba(46,143,91,.10);
+    --warn: #B37F1F; --warn-bg: rgba(179,127,31,.12);
+    --bad: #C24B4B; --bad-bg: rgba(194,75,75,.10);
+    --chart-band: rgba(46,125,131,.10); --chart-grid: rgba(27,36,38,.07);
+  }
+
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; padding: 20px 16px 40px;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  .num { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+         font-variant-numeric: tabular-nums; }
+
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 6px; }
+  h1 { font-size: 21px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+  .updated { color: var(--muted); font-size: 13px; }
+  #refresh-btn { margin-left: auto; border: 1px solid var(--accent); background: var(--accent-soft);
+    color: var(--accent); font: 600 13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 7px 16px; border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  #refresh-btn:hover { filter: brightness(1.1); }
+  #refresh-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #refresh-btn:disabled { opacity: .6; cursor: wait; }
+  @media (max-width: 560px) {
+    #refresh-btn { margin-left: 0; width: 100%; padding: 11px; font-size: 15px; }
+  }
+
+  .banner { border-radius: 10px; padding: 14px 18px; margin: 14px 0 18px;
+            display: flex; gap: 14px; align-items: center; border: 1px solid var(--line);
+            background: var(--surface); }
+  .banner .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; }
+  .banner.good { border-color: var(--good); background: var(--good-bg); }
+  .banner.good .dot { background: var(--good); }
+  .banner.warn { border-color: var(--warn); background: var(--warn-bg); }
+  .banner.warn .dot { background: var(--warn); }
+  .banner.bad  { border-color: var(--bad); background: var(--bad-bg); }
+  .banner.bad .dot { background: var(--bad); }
+  .banner b { font-size: 16px; }
+  .banner .sub { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+          padding: 16px 18px; min-width: 0; }
+  .card h2 { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+             color: var(--muted); margin: 0 0 10px; }
+  .span2 { grid-column: span 2; }
+  .span3 { grid-column: span 3; }
+  @media (max-width: 860px) {
+    .grid { grid-template-columns: 1fr 1fr; }
+    .span2, .span3 { grid-column: span 2; }
+  }
+  @media (max-width: 560px) {
+    .grid { grid-template-columns: 1fr; }
+    .span2, .span3 { grid-column: span 1; }
+    body { padding: 14px 10px 30px; }
+  }
+
+  .bigval { font-size: 30px; font-weight: 700; }
+  .chg { font-size: 14px; font-weight: 600; margin-left: 8px; }
+  .chg.up { color: var(--bad); }      /* рост VIX/UVXY = красный (страх) */
+  .chg.down { color: var(--good); }
+  .chg.up.inv { color: var(--good); } /* для SPX/SVIX рост = зелёный */
+  .chg.down.inv { color: var(--bad); }
+  .qrow { display: flex; justify-content: space-between; align-items: baseline;
+          padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .qrow:last-child { border-bottom: none; }
+  .qrow .sym { font-weight: 600; }
+  .qrow .desc { color: var(--muted); font-size: 12px; display: block; }
+
+  canvas { width: 100%; height: 300px; display: block; }
+  .chart-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .chart-legend span::before { content: ""; display: inline-block; width: 10px; height: 10px;
+     border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .lg-price::before { background: var(--ink); }
+  .lg-band::before { background: var(--chart-band); border: 1px solid var(--accent); }
+  .lg-sma::before { background: var(--accent); }
+  .lg-e10::before { background: var(--good); }
+  .lg-e20::before { background: var(--warn); }
+  .lg-e50::before { background: var(--bad); }
+
+  ul.rules { list-style: none; margin: 0; padding: 0; }
+  ul.rules li { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line);
+                font-size: 14px; align-items: flex-start; }
+  ul.rules li:last-child { border-bottom: none; }
+  .mark { flex: none; width: 22px; height: 22px; border-radius: 6px; display: flex;
+          align-items: center; justify-content: center; font-size: 13px; font-weight: 700; margin-top: 1px; }
+  .mark.ok { background: var(--good-bg); color: var(--good); }
+  .mark.no { background: var(--bad-bg); color: var(--bad); }
+  .mark.wait { background: var(--surface2); color: var(--muted); }
+
+  .ev { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line);
+        font-size: 14px; align-items: baseline; }
+  .ev:last-child { border-bottom: none; }
+  .ev .days { flex: none; min-width: 64px; font-weight: 700; }
+  .ev .days.soon { color: var(--bad); }
+  .ev .days.mid { color: var(--warn); }
+  .ev .date { color: var(--muted); font-size: 12.5px; }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 600; letter-spacing: .05em;
+         padding: 1px 7px; border-radius: 20px; background: var(--accent-soft); color: var(--accent);
+         text-transform: uppercase; margin-left: 6px; vertical-align: 1px; }
+
+  .alerts li { font-size: 13.5px; }
+  .note { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+  .note:last-child { border-bottom: none; }
+  .note .nd { color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); font-size: 13.5px; }
+
+  .struct-vis { display: flex; align-items: flex-end; gap: 18px; margin: 10px 0 4px; }
+  .struct-col { flex: 1; text-align: center; }
+  .struct-col .bar { border-radius: 6px 6px 0 0; background: var(--accent-soft);
+                     border: 1px solid var(--accent); border-bottom: none; margin: 0 auto; width: 70%; }
+  .struct-col .v { font-weight: 700; font-size: 15px; margin-top: 6px; }
+  .struct-col .l { color: var(--muted); font-size: 11.5px; letter-spacing: .04em; }
+  .struct-verdict { margin-top: 12px; padding: 9px 12px; border-radius: 8px; font-size: 13.5px; font-weight: 600; }
+  .struct-verdict.good { background: var(--good-bg); color: var(--good); }
+  .struct-verdict.bad { background: var(--bad-bg); color: var(--bad); }
+  .struct-verdict.warn { background: var(--warn-bg); color: var(--warn); }
+
+  footer { margin-top: 22px; color: var(--muted); font-size: 12px; line-height: 1.6;
+           border-top: 1px solid var(--line); padding-top: 12px; }
+
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+           max-width: 92vw; background: var(--surface); color: var(--ink);
+           border: 1px solid var(--accent); border-radius: 10px; padding: 12px 18px;
+           font-size: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.25); z-index: 50;
+           opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Волатильность · Монитор</h1>
+    <span class="updated">Данные на: <b id="data-time" class="num"></b><span id="stale"></span> · Пересборка: <span id="updated" class="num">—</span></span>
+    <button id="refresh-btn" type="button">⟳ Обновить</button>
+  </header>
+
+  <div class="banner" id="banner">
+    <div class="dot"></div>
+    <div><b id="banner-title">Загрузка…</b><div class="sub" id="banner-sub"></div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card span2">
+      <h2>VIX · Bollinger Bands (20, 2σ) · 6 мес</h2>
+      <div><span class="bigval num" id="vix-price">—</span><span class="chg num" id="vix-chg"></span></div>
+      <canvas id="chart"></canvas>
+      <div class="chart-legend">
+        <span class="lg-price">VIX закрытие</span>
+        <span class="lg-band">Полосы Боллинджера</span>
+        <span class="lg-sma">SMA 20</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Структура кривой · VX-фьючерсы</h2>
+      <div class="struct-vis" id="struct-vis"></div>
+      <div class="struct-verdict" id="struct-verdict">—</div>
+      <div class="struct-verdict" id="decay-verdict" style="display:none"></div>
+      <div id="corr-line" style="color:var(--muted);font-size:12.5px;margin-top:10px"></div>
+      <div style="color:var(--muted);font-size:12px;margin-top:6px" id="struct-src">
+        Восходящая лестница = контанго, нисходящая = бэквордация.
+        Лимит декая: контанго VX1→VX2 не ниже +5%/мес.
+      </div>
+    </div>
+
+    <div class="card span3">
+      <h2>SPY · Дневной график · EMA 10 / 20 / 50 · 6 мес</h2>
+      <div><span class="bigval num" id="spy-price">—</span><span class="chg num" id="spy-chg"></span></div>
+      <canvas id="chart-spy"></canvas>
+      <div class="chart-legend">
+        <span class="lg-price">SPY закрытие</span>
+        <span class="lg-e10">EMA 10</span>
+        <span class="lg-e20">EMA 20</span>
+        <span class="lg-e50">EMA 50</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Котировки</h2>
+      <div id="quotes"></div>
+    </div>
+
+    <div class="card">
+      <h2>Сейчас можно</h2>
+      <ul class="rules" id="rules-ok"></ul>
+    </div>
+
+    <div class="card">
+      <h2>Сейчас нельзя</h2>
+      <ul class="rules" id="rules-no"></ul>
+    </div>
+
+    <div class="card span2">
+      <h2>Календарь событий</h2>
+      <div id="events"></div>
+    </div>
+
+    <div class="card">
+      <h2>Активные алерты</h2>
+      <ul class="rules alerts" id="alerts"></ul>
+    </div>
+
+    <div class="card span3">
+      <h2>Заметки и новости</h2>
+      <div id="notes"></div>
+    </div>
+  </div>
+
+  <footer>
+    Механические сигналы по заранее заданным правилам (BB-стратегия по VIX, структура фьючерсной
+    кривой, календарь событий). Данные Yahoo Finance / Cboe, задержка до 15 минут; панель
+    пересобирается по расписанию в торговые часы. Это информационная панель, а не индивидуальная
+    инвестиционная рекомендация.
+  </footer>
+</div>
+
+<script id="data" type="application/json">__DATA_JSON__</script>
+<script>
+(function () {
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const $ = id => document.getElementById(id);
+  const fmt = (n, d = 2) => n == null ? "—" : n.toLocaleString("ru-RU",
+      { minimumFractionDigits: d, maximumFractionDigits: d });
+
+  // --- шапка: время котировок (по VIX) и время пересборки
+  const upd = new Date(D.updated_utc);
+  $("updated").textContent = upd.toLocaleString("ru-RU",
+      { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const fmtDT = d => d.toLocaleString("ru-RU",
+      { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  if (D.quotes.VIX && D.quotes.VIX.t) {
+    const dt = new Date(D.quotes.VIX.t * 1000);
+    $("data-time").textContent = fmtDT(dt);
+    if (Date.now() - dt.getTime() > 60 * 60 * 1000)
+      $("stale").textContent = " (рынок закрыт — последнее закрытие)";
+  } else {
+    $("data-time").textContent = "—";
+  }
+
+  // --- котировки
+  const q = D.quotes;
+  const pct = k => (q[k] && q[k].prev) ? (q[k].price / q[k].prev - 1) * 100 : null;
+  const chgHtml = (k, inv) => {
+    const p = pct(k);
+    if (p == null) return "";
+    const cls = (p >= 0 ? "up" : "down") + (inv ? " inv" : "");
+    return `<span class="chg num ${cls}">${p >= 0 ? "+" : ""}${fmt(p)}%</span>`;
+  };
+  $("vix-price").textContent = fmt(q.VIX.price);
+  $("vix-chg").outerHTML = chgHtml("VIX");
+
+  const qdefs = [
+    ["UVXY", "1.5x лонг VIX-фьючерсы", false],
+    ["SVIX", "−1x VIX-фьючерсы", true],
+    ["ES", "Фьючерс S&P 500", true],
+    ["NQ", "Фьючерс NASDAQ 100", true],
+    ["VIX9D", "9-дневная vol", false],
+    ["VIX3M", "3-месячная vol", false],
+    ["BRENT", "Нефть Brent", false],
+  ];
+  let qhtml = qdefs.filter(([k]) => q[k]).map(([k, desc, inv]) =>
+    `<div class="qrow"><div><span class="sym">${k}</span><span class="desc">${desc}</span></div>
+     <div><span class="num">${fmt(q[k].price)}</span>${chgHtml(k, inv)}</div></div>`).join("");
+  // Ширина рынка: S5TW/S5FI (расчёт по составу S&P 500, рост = зелёный)
+  if (D.breadth) {
+    const bdefs = [
+      ["S5TW", "% акций S&P выше 20-дн MA", D.breadth.s5tw, D.breadth.s5tw_prev],
+      ["S5FI", "% акций S&P выше 50-дн MA", D.breadth.s5fi, D.breadth.s5fi_prev],
+    ];
+    qhtml += bdefs.map(([k, desc, v, p]) => {
+      const d = v - p;
+      const cls = d >= 0 ? "up inv" : "down inv";
+      return `<div class="qrow"><div><span class="sym">${k}</span><span class="desc">${desc}</span></div>
+       <div><span class="num">${fmt(v, 0)}%</span><span class="chg num ${cls}">${d >= 0 ? "+" : ""}${fmt(d, 1)} п.п.</span></div></div>`;
+    }).join("");
+  }
+  $("quotes").innerHTML = qhtml;
+
+  // --- Bollinger
+  const hist = D.history.VIX;
+  const closes = hist.map(h => h[1]);
+  const N = 20, K = 2;
+  const bb = closes.map((c, i) => {
+    if (i < N - 1) return null;
+    const win = closes.slice(i - N + 1, i + 1);
+    const m = win.reduce((a, b) => a + b) / N;
+    const sd = Math.sqrt(win.reduce((a, b) => a + (b - m) ** 2, 0) / N);
+    return { mid: m, up: m + K * sd, lo: m - K * sd };
+  });
+  const last = closes[closes.length - 1];
+  const lastBB = bb[bb.length - 1];
+  const bbPos = lastBB ? (last - lastBB.lo) / (lastBB.up - lastBB.lo) : 0.5;
+
+  // --- структура кривой: реальные VX1/VX2 (CBOE), fallback — индексы
+  const v9 = q.VIX9D && q.VIX9D.price, v0 = q.VIX.price, v3 = q.VIX3M && q.VIX3M.price;
+  const vx = D.vx; // [VX1, VX2] или null
+  const expLbl = e => { const d = new Date(e + "T00:00:00");
+    return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }); };
+  let cols, contango, strength;
+  if (vx) {
+    cols = [["VIX", v0], [`VX1·${expLbl(vx[0].expiry)}`, vx[0].price],
+            [`VX2·${expLbl(vx[1].expiry)}`, vx[1].price], ["VIX3M", v3]].filter(c => c[1] != null);
+    contango = vx[1].price > vx[0].price;
+    strength = (vx[1].price / vx[0].price - 1) * 100; // контанго VX1→VX2, %/мес
+  } else {
+    cols = [["VIX9D", v9], ["VIX", v0], ["VIX3M", v3]].filter(c => c[1] != null);
+    contango = v3 != null && v3 > v0;
+    strength = v3 != null ? (v3 / v0 - 1) * 100 : 0;
+    $("struct-src").textContent = "CBOE недоступен — прокси по индексам VIX9D/VIX/VIX3M.";
+  }
+  const maxV = Math.max(...cols.map(c => c[1]));
+  $("struct-vis").innerHTML = cols.map(([l, v]) =>
+    `<div class="struct-col"><div class="bar" style="height:${18 + 80 * v / maxV}px"></div>
+     <div class="v num">${fmt(v, 1)}</div><div class="l">${l}</div></div>`).join("");
+  const sv = $("struct-verdict");
+  if (contango && strength >= 5) {
+    sv.className = "struct-verdict good";
+    sv.textContent = `Контанго VX1→VX2 +${fmt(strength, 1)}% — декай работает на шорт-вол`;
+  } else if (contango) {
+    sv.className = "struct-verdict warn";
+    sv.textContent = `Слабое контанго +${fmt(strength, 1)}% — преимущество минимально`;
+  } else {
+    sv.className = "struct-verdict bad";
+    sv.textContent = `Бэквордация ${fmt(strength, 1)}% — стресс, ролл против шорт-вол`;
+  }
+
+  // --- декай UVXY: оценка и лимиты «подходит / не подходит»
+  const decayOk = contango && strength >= 5;      // лимит: контанго ≥ +5%/мес
+  const decayWeak = contango && strength < 5;
+  const dv = $("decay-verdict");
+  dv.style.display = "";
+  const decayEst = 1.5 * strength;                // 1.5x плечо UVXY
+  if (decayOk) {
+    dv.className = "struct-verdict good";
+    dv.textContent = `Декай UVXY ≈ −${fmt(decayEst, 1)}%/мес — ПОДХОДИТ (≥ лимита 5%)`;
+  } else if (decayWeak) {
+    dv.className = "struct-verdict warn";
+    dv.textContent = `Декай слабый (≈ −${fmt(decayEst, 1)}%/мес, ниже лимита 5%) — только удержание`;
+  } else {
+    dv.className = "struct-verdict bad";
+    dv.textContent = "Декай отрицательный — НЕ ПОДХОДИТ, шорт-вол платит за ролл";
+  }
+
+  // --- корреляция VIX ↔ S&P 500 (20 торговых дней)
+  let corr = null;
+  if (D.history.SPX && D.history.SPX.length > 22) {
+    const map = {}; D.history.SPX.forEach(h => map[h[0]] = h[1]);
+    const pairs = hist.filter(h => map[h[0]] != null).map(h => [h[1], map[h[0]]]);
+    const n = 21, tail = pairs.slice(-n);
+    if (tail.length === n) {
+      const rv = [], rs = [];
+      for (let i = 1; i < n; i++) {
+        rv.push(tail[i][0] / tail[i - 1][0] - 1);
+        rs.push(tail[i][1] / tail[i - 1][1] - 1);
+      }
+      const mean = a => a.reduce((x, y) => x + y) / a.length;
+      const mv = mean(rv), ms = mean(rs);
+      let num = 0, dv1 = 0, dv2 = 0;
+      for (let i = 0; i < rv.length; i++) {
+        num += (rv[i] - mv) * (rs[i] - ms);
+        dv1 += (rv[i] - mv) ** 2; dv2 += (rs[i] - ms) ** 2;
+      }
+      corr = num / Math.sqrt(dv1 * dv2);
+    }
+  }
+  if (corr != null) {
+    const cState = corr <= -0.5 ? "норма (обратная связь работает)"
+      : corr <= -0.2 ? "ослаблена — следить" : "аномалия: связь сломана";
+    $("corr-line").innerHTML = `Корреляция VIX↔S&P (20 дн): <b class="num">${fmt(corr, 2)}</b> — ${cState}`;
+  }
+
+  // --- события
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const evs = D.events.map(e => ({ ...e, d: Math.round((new Date(e.date + "T00:00:00") - today) / 864e5) }))
+    .filter(e => e.d >= -1).sort((a, b) => a.d - b.d);
+  const evWord = d => d === 0 ? "сегодня" : d === 1 ? "завтра" :
+      d < 0 ? "вчера" : `${d} дн.`;
+  $("events").innerHTML = evs.slice(0, 8).map(e =>
+    `<div class="ev"><span class="days num ${e.d <= 2 ? "soon" : e.d <= 7 ? "mid" : ""}">${evWord(e.d)}</span>
+     <span>${e.label}${e.approx ? '<span class="tag">дата ≈</span>' : ""}
+     <span class="date"> · ${new Date(e.date + "T00:00:00").toLocaleDateString("ru-RU", { day: "numeric", month: "long" })}</span></span></div>`).join("");
+
+  const nextFomc = evs.find(e => e.kind === "fomc");
+  const nextExp = evs.find(e => e.kind === "expn");
+
+  // --- правила «можно / нельзя» (механика стратегии)
+  const ok = [], no = [];
+  if (decayOk && v0 < 20)
+    ok.push(`Декай положительный (контанго +${fmt(strength, 1)}% ≥ лимита 5%) и VIX ниже 20 — шорт-вол позиции подходят`);
+  if (decayOk && v0 >= 20)
+    ok.push("Декай в норме, но VIX повышен — шорт-вол подходит с консервативным размером");
+  if (bbPos <= 0.15)
+    ok.push(`VIX у нижней полосы Боллинджера (${fmt(lastBB.lo, 1)}) — по BB-стратегии это зона входа в лонг-вол`);
+  if (bbPos >= 0.85)
+    ok.push(`VIX у верхней полосы (${fmt(lastBB.up, 1)}) — по BB-стратегии зона фиксации лонг-вол`);
+  ok.push("Стоп-приказ в платформе на каждую открытую позицию — постоянное правило");
+
+  if (!contango)
+    no.push("Декай отрицательный (бэквордация VX1→VX2): шорт-вол НЕ ПОДХОДИТ — ролл работает против позиции");
+  if (decayWeak)
+    no.push(`Декай ниже лимита (+${fmt(strength, 1)}% < 5%): новые шорт-вол входы не подходят, только удержание`);
+  if (corr != null && corr > -0.2)
+    no.push(`Корреляция VIX↔S&P сломана (${fmt(corr, 2)}) — нетипичный режим, сигналы ненадёжны`);
+  if (v0 > 28)
+    no.push("VIX выше 28 — режим стресса, BB-тактика не применяется, уровни пересматриваются");
+  if (bbPos > 0.15 && bbPos < 0.85)
+    no.push(`VIX в середине канала (позиция ${fmt(bbPos * 100, 0)}%) — сигнала по BB нет, вход вне системы`);
+  if (nextFomc && nextFomc.d <= 2)
+    no.push(`FOMC ${evWord(nextFomc.d)} — не держать полную позицию через объявление и Dot Plot`);
+  if (nextExp && nextExp.d <= 1)
+    no.push(`${nextExp.label} ${evWord(nextExp.d)} — резкие движения на экспирации, не открывать новое`);
+  if (!no.length) no.push("Жёстких запретов по правилам сейчас нет — действуют стандартные лимиты риска");
+
+  const li = (t, m) => `<li><span class="mark ${m}">${m === "ok" ? "✓" : m === "no" ? "✕" : "•"}</span><span>${t}</span></li>`;
+  $("rules-ok").innerHTML = ok.map(t => li(t, "ok")).join("");
+  $("rules-no").innerHTML = no.map(t => li(t, "no")).join("");
+
+  // --- активные алерты (что мониторит планировщик)
+  const alerts = [
+    { on: bbPos >= 0.97 || bbPos <= 0.03, t: "VIX пересёк полосу Боллинджера" },
+    { on: !contango, t: "Декай отрицательный — VX1/VX2 в бэквордации" },
+    { on: decayWeak, t: "Декай ниже лимита +5%/мес" },
+    { on: corr != null && corr > -0.2, t: "Корреляция VIX↔S&P аномальна (> −0.2)" },
+    { on: v0 > 28, t: "VIX выше 28 — смена режима" },
+    { on: v0 < 16, t: "VIX ниже 16 — зона низкой волы (историческая зона входа лонг-вол)" },
+    { on: Math.abs(pct("UVXY") || 0) > 8, t: "UVXY двигается более чем на 8% за день" },
+    { on: !!(nextFomc && nextFomc.d <= 1), t: "FOMC в ближайшие 24 часа" },
+  ];
+  $("alerts").innerHTML = alerts.map(a =>
+    li(a.t, a.on ? "no" : "wait")).join("") +
+    `<li style="border:none;color:var(--muted);font-size:12px;padding-top:10px">
+       ✕ = сработал сейчас · • = отслеживается</li>`;
+
+  // --- заметки
+  $("notes").innerHTML = D.notes.length
+    ? D.notes.slice(0, 6).map(n => `<div class="note"><span class="nd">${n.date}</span> — ${n.text}</div>`).join("")
+    : `<div class="empty">Заметок пока нет — они добавляются при часовом обновлении, если выходят значимые новости.</div>`;
+
+  // --- баннер режима
+  const b = $("banner");
+  let cls, title, sub;
+  if (v0 > 28 || (!contango && strength < -5)) {
+    cls = "bad"; title = "Красный режим — рыночный стресс";
+    sub = "VIX в стрессовой зоне или глубокая бэквордация. Шорт-вол против ветра, защита обязательна.";
+  } else if (v0 > 20 || !contango || decayWeak) {
+    cls = "warn"; title = "Жёлтый режим — повышенное внимание";
+    sub = !contango ? "Декай отрицательный — структура кривой против шорт-вол."
+      : decayWeak ? `Декай ниже лимита: контанго VX1→VX2 всего +${fmt(strength, 1)}% (< 5%).`
+      : "VIX повышен. Сокращённые размеры, повышенное внимание к событиям.";
+  } else {
+    cls = "good"; title = "Зелёный режим — спокойный рынок";
+    sub = `VIX ${fmt(v0, 1)}, контанго VX1→VX2 +${fmt(strength, 1)}%, декай положительный — структурные стратегии в штатном режиме.`;
+  }
+  b.classList.add(cls); $("banner-title").textContent = title; $("banner-sub").textContent = sub;
+
+  // --- график
+  const cv = $("chart"), ctx = cv.getContext("2d");
+  function draw() {
+    const dpr = window.devicePixelRatio || 1;
+    const W = cv.clientWidth, H = 300;
+    if (!W) { requestAnimationFrame(draw); return; }
+    cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const padL = 34, padR = 46, padT = 12, padB = 22;
+    const iw = W - padL - padR, ih = H - padT - padB;
+    const vals = [];
+    closes.forEach(c => vals.push(c));
+    bb.forEach(p => { if (p) { vals.push(p.up, p.lo); } });
+    const lo = Math.floor(Math.min(...vals) - 1), hi = Math.ceil(Math.max(...vals) + 1);
+    const X = i => padL + iw * i / (closes.length - 1);
+    const Y = v => padT + ih * (1 - (v - lo) / (hi - lo));
+    const css = getComputedStyle(document.documentElement);
+    const col = n => css.getPropertyValue(n).trim();
+
+    ctx.strokeStyle = col("--chart-grid"); ctx.lineWidth = 1;
+    ctx.fillStyle = col("--muted"); ctx.font = "10.5px ui-monospace, Menlo, monospace";
+    const step = (hi - lo) > 20 ? 5 : (hi - lo) > 8 ? 2 : 1;
+    for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+      ctx.beginPath(); ctx.moveTo(padL, Y(v)); ctx.lineTo(W - padR, Y(v)); ctx.stroke();
+      ctx.fillText(String(v), 6, Y(v) + 3.5);
+    }
+    // месяцы по оси X
+    let prevM = "";
+    hist.forEach((h, i) => {
+      const m = h[0].slice(0, 7);
+      if (m !== prevM && i > 0) {
+        const d = new Date(h[0] + "T00:00:00");
+        ctx.fillText(d.toLocaleDateString("ru-RU", { month: "short" }), X(i) - 8, H - 6);
+      }
+      prevM = m;
+    });
+
+    // полоса BB
+    ctx.beginPath();
+    let started = false;
+    bb.forEach((p, i) => { if (p) { started ? ctx.lineTo(X(i), Y(p.up)) : ctx.moveTo(X(i), Y(p.up)); started = true; } });
+    for (let i = bb.length - 1; i >= 0; i--) if (bb[i]) ctx.lineTo(X(i), Y(bb[i].lo));
+    ctx.closePath(); ctx.fillStyle = col("--chart-band"); ctx.fill();
+
+    // SMA
+    ctx.beginPath(); started = false;
+    bb.forEach((p, i) => { if (p) { started ? ctx.lineTo(X(i), Y(p.mid)) : ctx.moveTo(X(i), Y(p.mid)); started = true; } });
+    ctx.strokeStyle = col("--accent"); ctx.lineWidth = 1.4; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+
+    // цена
+    ctx.beginPath();
+    closes.forEach((c, i) => i ? ctx.lineTo(X(i), Y(c)) : ctx.moveTo(X(i), Y(c)));
+    ctx.strokeStyle = col("--ink"); ctx.lineWidth = 1.8; ctx.lineJoin = "round"; ctx.stroke();
+
+    // последняя точка
+    const lx = X(closes.length - 1), ly = Y(last);
+    ctx.beginPath(); ctx.arc(lx, ly, 3.5, 0, 7); ctx.fillStyle = col("--accent"); ctx.fill();
+    ctx.fillStyle = col("--ink"); ctx.font = "bold 12px ui-monospace, Menlo, monospace";
+    ctx.fillText(fmt(last, 1), lx + 8, ly + 4);
+  }
+  // --- кнопка «Обновить»: перезагружает страницу → подтягивает последнюю
+  // опубликованную сборку (планировщик публикует свежую каждый час в торговые часы)
+  // На GitHub Pages страница сама себе хозяйка — обычная перезагрузка
+  const rb = $("refresh-btn");
+  rb.addEventListener("click", () => {
+    rb.disabled = true; rb.textContent = "Обновляю…";
+    location.reload();
+  });
+    }
+  });
+
+  // --- график SPY с EMA 10/20/50
+  const spyHist = D.history.SPY || [];
+  const spyCloses = spyHist.map(h => h[1]);
+  if (q.SPY) {
+    $("spy-price").textContent = fmt(q.SPY.price);
+    $("spy-chg").outerHTML = chgHtml("SPY", true);
+  }
+  function emaSeries(vals, n) {
+    const k = 2 / (n + 1), out = new Array(vals.length).fill(null);
+    if (vals.length < n) return out;
+    let e = vals.slice(0, n).reduce((a, b) => a + b) / n;
+    out[n - 1] = e;
+    for (let i = n; i < vals.length; i++) { e = e + k * (vals[i] - e); out[i] = e; }
+    return out;
+  }
+  const e10 = emaSeries(spyCloses, 10), e20 = emaSeries(spyCloses, 20), e50 = emaSeries(spyCloses, 50);
+  const cvs = document.getElementById("chart-spy");
+  function drawSpy() {
+    if (!cvs || !spyCloses.length) return;
+    const ctx2 = cvs.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    const W = cvs.clientWidth, H = 300;
+    if (!W) { requestAnimationFrame(drawSpy); return; }
+    cvs.width = W * dpr; cvs.height = H * dpr; ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx2.clearRect(0, 0, W, H);
+    const padL = 44, padR = 56, padT = 12, padB = 22;
+    const iw = W - padL - padR, ih = H - padT - padB;
+    const vals = spyCloses.slice();
+    [e10, e20, e50].forEach(s => s.forEach(v => { if (v != null) vals.push(v); }));
+    const lo = Math.min(...vals) * 0.995, hi = Math.max(...vals) * 1.005;
+    const X = i => padL + iw * i / (spyCloses.length - 1);
+    const Y = v => padT + ih * (1 - (v - lo) / (hi - lo));
+    const css = getComputedStyle(document.documentElement);
+    const col = n => css.getPropertyValue(n).trim();
+    // сетка с «красивым» шагом
+    const range = hi - lo, rough = range / 5;
+    const p10 = Math.pow(10, Math.floor(Math.log10(rough)));
+    const step = [1, 2, 5, 10].map(m => m * p10).find(s => s >= rough) || p10 * 10;
+    ctx2.strokeStyle = col("--chart-grid"); ctx2.lineWidth = 1;
+    ctx2.fillStyle = col("--muted"); ctx2.font = "10.5px ui-monospace, Menlo, monospace";
+    for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+      ctx2.beginPath(); ctx2.moveTo(padL, Y(v)); ctx2.lineTo(W - padR, Y(v)); ctx2.stroke();
+      ctx2.fillText(String(Math.round(v)), 4, Y(v) + 3.5);
+    }
+    let prevM = "";
+    spyHist.forEach((h, i) => {
+      const m = h[0].slice(0, 7);
+      if (m !== prevM && i > 0) {
+        const d = new Date(h[0] + "T00:00:00");
+        ctx2.fillText(d.toLocaleDateString("ru-RU", { month: "short" }), X(i) - 8, H - 6);
+      }
+      prevM = m;
+    });
+    const line = (series, colour, width, dash) => {
+      ctx2.beginPath();
+      let started = false;
+      series.forEach((v, i) => {
+        if (v == null) return;
+        started ? ctx2.lineTo(X(i), Y(v)) : ctx2.moveTo(X(i), Y(v));
+        started = true;
+      });
+      ctx2.strokeStyle = colour; ctx2.lineWidth = width;
+      ctx2.setLineDash(dash || []); ctx2.lineJoin = "round"; ctx2.stroke(); ctx2.setLineDash([]);
+    };
+    line(e50, col("--bad"), 1.4);
+    line(e20, col("--warn"), 1.4);
+    line(e10, col("--good"), 1.4);
+    line(spyCloses, col("--ink"), 1.8);
+    const last = spyCloses[spyCloses.length - 1];
+    const lx = X(spyCloses.length - 1), ly = Y(last);
+    ctx2.beginPath(); ctx2.arc(lx, ly, 3.5, 0, 7); ctx2.fillStyle = col("--accent"); ctx2.fill();
+    ctx2.fillStyle = col("--ink"); ctx2.font = "bold 12px ui-monospace, Menlo, monospace";
+    ctx2.fillText(fmt(last, 0), lx + 7, ly + 4);
+  }
+
+  function drawAll() { draw(); drawSpy(); }
+  drawAll();
+  window.addEventListener("load", drawAll);
+  let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(drawAll, 150); });
+  new MutationObserver(drawAll).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>
