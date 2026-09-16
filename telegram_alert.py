@@ -42,6 +42,7 @@ def main():
         f"VX1 {vx1.get('price')} / VX2 {vx2.get('price')} · контанго {s.get('contango_pct')}%",
         f"Декай: {'подходит' if s.get('decay_ok') else 'НЕ подходит'} · корр. {s.get('corr20_vix_spx')}",
         f"Полосы BB: {s.get('bb_lower')} / {s.get('bb_sma')} / {s.get('bb_upper')}",
+        f"Ширина: S5TW {s.get('s5tw')}% · S5FI {s.get('s5fi')}%",
     ]
     text = "\n".join(lines)
 

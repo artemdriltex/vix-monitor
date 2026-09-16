@@ -87,15 +87,7 @@ def main():
             upcoming.append((dd, e["label"]))
 
     triggered = []
-    if vix >= upper:
-        triggered.append(f"VIX {vix:.2f} пересёк ВЕРХНЮЮ полосу Боллинджера ({upper:.2f}) — зона фиксации лонг-вол по BB-стратегии")
-    if vix <= lower:
-        triggered.append(f"VIX {vix:.2f} пересёк НИЖНЮЮ полосу Боллинджера ({lower:.2f}) — зона входа лонг-вол по BB-стратегии")
-    if vix > 28 and (vix_prev is None or vix_prev <= 28):
-        triggered.append(f"VIX {vix:.2f} выше 28 — смена режима, BB-тактика приостанавливается")
-    if vix < 16 and (vix_prev is None or vix_prev >= 16):
-        triggered.append(f"VIX {vix:.2f} опустился ниже 16 — историческая зона низкой волатильности")
-    # декай по реальным VX1/VX2 (fallback — индексы VIX/VIX3M)
+    # --- декай по реальным VX1/VX2 (fallback — индексы VIX/VIX3M)
     if vx:
         vx1, vx2 = vx[0], vx[1]
         cont_now = (vx2["price"] / vx1["price"] - 1) * 100
@@ -103,30 +95,26 @@ def main():
                      if vx1.get("prevClose") and vx2.get("prevClose") else None)
         if cont_now <= 0 and (cont_prev is None or cont_prev > 0):
             triggered.append(f"ДЕКАЙ ОТРИЦАТЕЛЬНЫЙ: VX1/VX2 в бэквордации ({cont_now:+.1f}%) — шорт-вол не подходит")
-        if cont_now > 0 and cont_prev is not None and cont_prev <= 0:
-            triggered.append(f"Декай снова положительный: контанго VX1→VX2 {cont_now:+.1f}% — структура за шорт-вол")
         if 0 < cont_now < 5 and (cont_prev is None or cont_prev >= 5):
             triggered.append(f"Декай упал ниже лимита 5%: контанго VX1→VX2 всего {cont_now:+.1f}% — новые входы не подходят")
-        if cont_now >= 5 and cont_prev is not None and 0 < cont_prev < 5:
-            triggered.append(f"Декай вернулся выше лимита 5%: контанго VX1→VX2 {cont_now:+.1f}% — условия снова подходят")
     elif v3 is not None:
         back_now = vix > v3
         back_prev = (vix_prev is not None and v3_prev is not None and vix_prev > v3_prev)
         if back_now and not back_prev:
             triggered.append(f"Кривая перешла в БЭКВОРДАЦИЮ (VIX {vix:.2f} > VIX3M {v3:.2f}) — ролл против шорт-вол")
-        if not back_now and back_prev:
-            triggered.append(f"Кривая вернулась в КОНТАНГО (VIX {vix:.2f} < VIX3M {v3:.2f}) — декай снова работает на шорт-вол")
-    if corr is not None and corr > -0.2:
-        triggered.append(f"Корреляция VIX↔S&P аномальна ({corr:+.2f}, норма ≤ −0.5) — сигналы стратегии ненадёжны")
-    if uv_prev:
-        mv = (uv / uv_prev - 1) * 100
-        if abs(mv) > 8:
-            triggered.append(f"UVXY {mv:+.1f}% за день (${uv:.2f}) — аномальное движение")
-    from zoneinfo import ZoneInfo
-    now_h = datetime.now(ZoneInfo("America/New_York")).hour
-    if now_h < 11:  # событийные алерты — только утренним запуском, чтобы не спамить
-        for dd, label in upcoming:
-            triggered.append(f"{'СЕГОДНЯ' if dd == 0 else 'Завтра'}: {label} — по правилам не держать полную позицию через событие")
+
+    # --- ширина рынка S5TW: перепроданность / перекупленность
+    import build_dashboard
+    try:
+        br = build_dashboard.breadth_sp500()
+    except Exception:
+        br = None
+    if br:
+        s5tw = br["s5tw"]
+        if s5tw < 20:
+            triggered.append(f"Ширина рынка: S5TW {s5tw}% — ниже 20%, зона перепроданности (исторически близко к развороту)")
+        if s5tw > 80:
+            triggered.append(f"Ширина рынка: S5TW {s5tw}% — выше 80%, зона перекупленности")
 
     # подавление повторов: один и тот же алерт не чаще раза в день
     state_f = HERE / "alerts_state.json"
@@ -148,6 +136,8 @@ def main():
             "contango_pct": round((vx[1]["price"] / vx[0]["price"] - 1) * 100, 2) if vx else None,
             "decay_ok": bool(vx and (vx[1]["price"] / vx[0]["price"] - 1) * 100 >= 5),
             "corr20_vix_spx": round(corr, 2) if corr is not None else None,
+            "s5tw": br["s5tw"] if br else None,
+            "s5fi": br["s5fi"] if br else None,
             "bb_lower": round(lower, 2), "bb_sma": round(sma, 2), "bb_upper": round(upper, 2),
             "structure": ("backwardation" if vx[1]["price"] < vx[0]["price"] else "contango") if vx
                          else ("backwardation" if (v3 and vix > v3) else "contango"),

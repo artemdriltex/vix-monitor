@@ -109,7 +109,18 @@ def sp500_tickers():
     return json.loads(cache.read_text())["tickers"] if cache.exists() else None
 
 def breadth_sp500():
-    """S5TW/S5FI (расчётные): % акций S&P 500 выше своих 20- и 50-дневных SMA."""
+    """S5TW/S5FI (расчётные): % акций S&P 500 выше своих 20- и 50-дневных SMA.
+    Кэш на 10 минут (breadth_cache.json) — check_alerts и build считают один раз."""
+    cache = HERE / "breadth_cache.json"
+    if cache.exists():
+        try:
+            cached = json.loads(cache.read_text())
+            age = (datetime.now(timezone.utc)
+                   - datetime.fromisoformat(cached["computed"])).total_seconds()
+            if age < 600:
+                return cached["value"]
+        except Exception:
+            pass
     ticks = sp500_tickers()
     if not ticks:
         return None
@@ -146,13 +157,16 @@ def breadth_sp500():
         time.sleep(0.25)
     if counted < 300:  # данных слишком мало — не публикуем мусор
         return None
-    return {
+    result = {
         "s5tw": round(100 * above20 / counted, 1),
         "s5fi": round(100 * above50 / counted, 1),
         "s5tw_prev": round(100 * above20p / counted, 1),
         "s5fi_prev": round(100 * above50p / counted, 1),
         "n": counted,
     }
+    cache.write_text(json.dumps({
+        "computed": datetime.now(timezone.utc).isoformat(), "value": result}))
+    return result
 
 # Даты сверены 6 авг 2026: BLS (CPI/PPI), ФРС (FOMC), Cboe/Macroption (экспирации VX)
 EVENTS = [
