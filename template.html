@@ -648,34 +648,44 @@
   // пересчёт панели; при сбое прокси — перезагрузка с обходом кэша Pages
   const rb = document.getElementById("refresh-btn");
   const PROXY = u => "https://api.allorigins.win/get?url=" + encodeURIComponent(u);
-  async function cboeQuote(sym) {
+  async function viaProxy(url) {
     const opts = { cache: "no-store" };
     if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) opts.signal = AbortSignal.timeout(15000);
-    const r = await fetch(PROXY("https://cdn.cboe.com/api/global/delayed_quotes/quotes/" + sym + ".json"), opts);
+    const r = await fetch(PROXY(url), opts);
     if (!r.ok) throw new Error("proxy " + r.status);
-    const wrapped = await r.json();
-    const d = JSON.parse(wrapped.contents).data;
+    return JSON.parse((await r.json()).contents);
+  }
+  // Котировки — Yahoo (реальное время); VX-фьючерсы — CBOE (задержка ~15 мин)
+  async function yahooPrice(sym) {
+    const j = await viaProxy("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?range=1d&interval=5m");
+    const p = j.chart.result[0].meta.regularMarketPrice;
+    if (typeof p !== "number") throw new Error("no price " + sym);
+    return p;
+  }
+  async function cboeQuote(sym) {
+    const j = await viaProxy("https://cdn.cboe.com/api/global/delayed_quotes/quotes/" + sym + ".json");
+    const d = j.data;
     if (!d || typeof d.current_price !== "number") throw new Error("no data " + sym);
     return d;
   }
   rb.addEventListener("click", async () => {
     rb.disabled = true; rb.textContent = "Обновляю…";
-    try {
-      const symMap = { VIX: "_VIX", VIX9D: "_VIX9D", VIX3M: "_VIX3M", UVXY: "UVXY", SVIX: "SVIX", SPY: "SPY" };
-      const jobs = Object.entries(symMap).map(async ([k, s]) => {
-        const d = await cboeQuote(s);
-        if (DATA.quotes[k]) DATA.quotes[k].price = d.current_price;
-      });
-      (DATA.vx || []).forEach(f => jobs.push((async () => {
-        const d = await cboeQuote(f.sym);
+    const symMap = { VIX: "^VIX", VIX9D: "^VIX9D", VIX3M: "^VIX3M", UVXY: "UVXY",
+                     SVIX: "SVIX", SPY: "SPY", ES: "ES=F", NQ: "NQ=F", BRENT: "BZ=F" };
+    const jobs = Object.entries(symMap).map(([k, s]) =>
+      yahooPrice(s).then(p => { if (DATA.quotes[k]) DATA.quotes[k].price = p; return 1; }).catch(() => 0));
+    (DATA.vx || []).forEach(f => jobs.push(
+      cboeQuote(f.sym).then(d => {
         f.price = d.current_price;
         if (typeof d.prev_day_close === "number") f.prevClose = d.prev_day_close;
-      })()));
-      await Promise.all(jobs);
+        return 1;
+      }).catch(() => 0)));
+    const okCount = (await Promise.all(jobs)).reduce((a, b) => a + b, 0);
+    if (okCount >= 3) {
       liveStamp = new Date();
       boot();
       rb.disabled = false; rb.textContent = "⟳ Обновить";
-    } catch (e) {
+    } else {
       const u = new URL(location.href);
       u.searchParams.set("r", String(Date.now()));
       location.replace(u.toString());
