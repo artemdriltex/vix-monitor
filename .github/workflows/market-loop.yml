@@ -1,0 +1,55 @@
+name: market-loop
+
+# «Вахта»: одна задача на полдня, внутри цикл каждые 15 минут.
+# Планировщик GitHub может задержать СТАРТ смены, но не сам цикл.
+# Две смены с передачей вахты (вторая отменяет первую) + запасные старты.
+on:
+  schedule:
+    - cron: "0 13 * * 1-5"    # утренняя смена (≈ 9:00 ET летом)
+    - cron: "25 13 * * 1-5"   # запасной старт утренней
+    - cron: "0 17 * * 1-5"    # дневная смена
+    - cron: "25 17 * * 1-5"   # запасной старт дневной
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-loop
+  cancel-in-progress: true    # новая смена перехватывает вахту у старой
+
+jobs:
+  loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Вахта до конца сессии
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          git config user.name "vix-monitor-bot"
+          git config user.email "bot@users.noreply.github.com"
+          while true; do
+            echo "=== цикл $(date -u '+%H:%M UTC') ==="
+            python3 check_alerts.py > alerts_out.json || true
+            python3 build_dashboard.py || true
+            mkdir -p docs && cp dashboard.html docs/index.html || true
+            python3 telegram_alert.py alerts_out.json || true
+            git add -A
+            git diff --cached --quiet || git commit -m "auto: refresh $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git pull --rebase origin main || git rebase --abort || true
+            git push || true
+            # конец рабочего дня: 20:50 UTC (≈ 16:50 ET летом)
+            if [ "$(date -u +%H%M)" -ge 2050 ]; then
+              echo "Сессия закончена, вахта снята."
+              break
+            fi
+            sleep 900
+          done

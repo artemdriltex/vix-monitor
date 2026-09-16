@@ -1,9 +1,8 @@
 name: update-dashboard
 
+# Регулярные обновления делает market-loop.yml («вахта»);
+# этот workflow — для ручных запусков и теста Telegram.
 on:
-  schedule:
-    # каждые 15 минут, пн–пт, 13:00–20:45 UTC (≈ 9:00–16:45 по Нью-Йорку летом)
-    - cron: "*/15 13-20 * * 1-5"
   workflow_dispatch:
     inputs:
       test_telegram:
