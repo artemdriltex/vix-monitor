@@ -1,0 +1,44 @@
+name: relay
+
+# «Эстафета»: цепочка спящих задач, которая будит market-loop к открытию
+# рынка БЕЗ планировщика GitHub (он ненадёжен). Один прыжок ≤ ~5.5 часов;
+# если до будильника дальше — задача передаёт эстафету самой себе.
+on:
+  workflow_dispatch:
+    inputs:
+      wake_at:
+        description: "Unix-время (UTC), когда разбудить market-loop"
+        required: true
+        type: string
+
+permissions:
+  actions: write
+
+concurrency:
+  group: relay
+  cancel-in-progress: true
+
+jobs:
+  wait:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - name: Спать и передать эстафету
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAKE_AT: ${{ inputs.wake_at }}
+          REPO: ${{ github.repository }}
+        run: |
+          NOW=$(date -u +%s)
+          LIMIT=$((NOW + 20100))   # ~5ч35м — максимум одного прыжка
+          TARGET=$WAKE_AT
+          if [ "$TARGET" -lt "$LIMIT" ]; then SLEEP_UNTIL=$TARGET; else SLEEP_UNTIL=$LIMIT; fi
+          echo "Сейчас $NOW, будильник $TARGET, сплю до $SLEEP_UNTIL ($(( (SLEEP_UNTIL-NOW)/60 )) мин)"
+          while [ "$(date -u +%s)" -lt "$SLEEP_UNTIL" ]; do sleep 60; done
+          if [ "$(date -u +%s)" -ge "$TARGET" ]; then
+            echo "Пора: бужу market-loop"
+            gh workflow run market-loop --repo "$REPO"
+          else
+            echo "Ещё рано: следующий прыжок"
+            gh workflow run relay --repo "$REPO" -f wake_at="$TARGET"
+          fi

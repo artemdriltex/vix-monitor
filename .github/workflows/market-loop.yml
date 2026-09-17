@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: market-loop
@@ -33,6 +34,8 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           git config user.name "vix-monitor-bot"
           git config user.email "bot@users.noreply.github.com"
@@ -49,6 +52,14 @@ jobs:
             # конец рабочего дня: 20:50 UTC (≈ 16:50 ET летом)
             if [ "$(date -u +%H%M)" -ge 2050 ]; then
               echo "Сессия закончена, вахта снята."
+              # эстафета: будильник на следующее торговое утро 12:55 UTC
+              NEXT=$(python3 -c "
+          from datetime import datetime, timedelta, timezone
+          d = datetime.now(timezone.utc).date() + timedelta(days=1)
+          while d.weekday() > 4:
+              d += timedelta(days=1)
+          print(int(datetime(d.year, d.month, d.day, 12, 55, tzinfo=timezone.utc).timestamp()))")
+              gh workflow run relay --repo "$GH_REPO" -f wake_at="$NEXT" && echo "Эстафета передана: $NEXT" || echo "Не удалось передать эстафету!"
               break
             fi
             sleep 900
