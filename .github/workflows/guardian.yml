@@ -1,0 +1,26 @@
+name: guardian
+
+# Сторож: если эстафета или вахта упали аварийно (например, GitHub убил
+# сервер со спящей задачей) — перезапускает эстафету. Событийный триггер
+# workflow_run у GitHub надёжен, в отличие от расписаний.
+on:
+  workflow_run:
+    workflows: ["relay", "market-loop"]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  revive:
+    if: github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'timed_out'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Перезапустить эстафету
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Упал ${{ github.event.workflow_run.name }} (${{ github.event.workflow_run.conclusion }}) — оживляю цепочку"
+          sleep 120   # демпфер от частых перезапусков
+          gh workflow run relay --repo "$REPO"

@@ -1,15 +1,10 @@
 name: relay
 
-# «Эстафета»: цепочка спящих задач, которая будит market-loop к открытию
-# рынка БЕЗ планировщика GitHub (он ненадёжен). Один прыжок ≤ ~5.5 часов;
-# если до будильника дальше — задача передаёт эстафету самой себе.
+# Самонаводящаяся эстафета: сама вычисляет, когда рынок, и будит market-loop.
+# Запускать можно когда угодно и кем угодно — она сориентируется.
+# Аварийные падения ловит guardian.yml и перезапускает эстафету.
 on:
-  workflow_dispatch:
-    inputs:
-      wake_at:
-        description: "Unix-время (UTC), когда разбудить market-loop"
-        required: true
-        type: string
+  workflow_dispatch: {}
 
 permissions:
   actions: write
@@ -21,24 +16,46 @@ concurrency:
 jobs:
   wait:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
+    timeout-minutes: 350
     steps:
-      - name: Спать и передать эстафету
+      - name: Сориентироваться и передать эстафету
         env:
           GH_TOKEN: ${{ github.token }}
-          WAKE_AT: ${{ inputs.wake_at }}
           REPO: ${{ github.repository }}
         run: |
+          # торговое окно: пн-пт 12:55–20:45 UTC
+          in_window() {
+            local dow=$(date -u +%u) hm=$(date -u +%H%M)
+            [ "$dow" -le 5 ] && [ "$hm" -ge 1255 ] && [ "$hm" -lt 2045 ]
+          }
+          next_open() {  # unix-время ближайшего открытия (12:55 UTC торгового дня)
+            python3 -c "
+          from datetime import datetime, timedelta, timezone
+          now = datetime.now(timezone.utc)
+          d = now.date()
+          t = datetime(d.year, d.month, d.day, 12, 55, tzinfo=timezone.utc)
+          if now >= t or d.weekday() > 4:
+              d += timedelta(days=1)
+              while d.weekday() > 4:
+                  d += timedelta(days=1)
+              t = datetime(d.year, d.month, d.day, 12, 55, tzinfo=timezone.utc)
+          print(int(t.timestamp()))"
+          }
+          if in_window; then
+            echo "Рынок открыт — бужу market-loop"
+            gh workflow run market-loop --repo "$REPO"
+            exit 0
+          fi
+          TARGET=$(next_open)
           NOW=$(date -u +%s)
-          LIMIT=$((NOW + 20100))   # ~5ч35м — максимум одного прыжка
-          TARGET=$WAKE_AT
+          LIMIT=$((NOW + 20100))
           if [ "$TARGET" -lt "$LIMIT" ]; then SLEEP_UNTIL=$TARGET; else SLEEP_UNTIL=$LIMIT; fi
-          echo "Сейчас $NOW, будильник $TARGET, сплю до $SLEEP_UNTIL ($(( (SLEEP_UNTIL-NOW)/60 )) мин)"
+          echo "Сейчас $NOW, открытие $TARGET, сплю $(( (SLEEP_UNTIL-NOW)/60 )) мин"
           while [ "$(date -u +%s)" -lt "$SLEEP_UNTIL" ]; do sleep 60; done
           if [ "$(date -u +%s)" -ge "$TARGET" ]; then
-            echo "Пора: бужу market-loop"
+            echo "Открытие — бужу market-loop"
             gh workflow run market-loop --repo "$REPO"
           else
-            echo "Ещё рано: следующий прыжок"
-            gh workflow run relay --repo "$REPO" -f wake_at="$TARGET"
+            echo "Ещё ночь — следующий прыжок"
+            gh workflow run relay --repo "$REPO"
           fi
