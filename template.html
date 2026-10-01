@@ -342,8 +342,9 @@
     return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }); };
   let cols, contango, strength;
   if (vx) {
-    cols = [["VIX", v0], [`VX1·${expLbl(vx[0].expiry)}`, vx[0].price],
-            [`VX2·${expLbl(vx[1].expiry)}`, vx[1].price], ["VIX3M", v3]].filter(c => c[1] != null);
+    const vxTag = f => f.src === "settle" ? " (сеттл)" : "";
+    cols = [["VIX", v0], [`VX1·${expLbl(vx[0].expiry)}${vxTag(vx[0])}`, vx[0].price],
+            [`VX2·${expLbl(vx[1].expiry)}${vxTag(vx[1])}`, vx[1].price], ["VIX3M", v3]].filter(c => c[1] != null);
     contango = vx[1].price > vx[0].price;
     strength = (vx[1].price / vx[0].price - 1) * 100; // контанго VX1→VX2, %/мес
   } else {
@@ -663,9 +664,12 @@
     return p;
   }
   async function cboeQuote(sym) {
-    const j = await viaProxy("https://cdn.cboe.com/api/global/delayed_quotes/quotes/" + sym + ".json");
+    const j = await viaProxy("https://cdn-api.cboe.com/api/global/delayed_quotes/quotes/" + sym + ".json");
     const d = j.data;
     if (!d || typeof d.current_price !== "number") throw new Error("no data " + sym);
+    // протухшую котировку (фид CBOE ломается) не считаем живой
+    const age = Date.now() - Date.parse(String(j.timestamp || "1970-01-01 00:00:00").replace(" ", "T") + "Z");
+    if (age > 48 * 3600 * 1000) throw new Error("stale " + sym);
     return d;
   }
   rb.addEventListener("click", async () => {

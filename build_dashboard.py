@@ -8,7 +8,7 @@
 import json
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -50,6 +50,33 @@ def history(symbol: str, rng: str) -> list:
                     round(c, 2)])
     return out
 
+def cboe_settlements():
+    """Сеттлменты VX по датам экспирации: {expiry: (последний, предыдущий)}.
+    Запасной источник: фид котировок CBOE для дальних контрактов ломается
+    (окт 2026 — завис с 23 сент), а сеттлменты публикуются каждый вечер."""
+    import csv, io
+    found = []
+    d = datetime.now(timezone.utc).date()
+    tries = 0
+    while len(found) < 2 and tries < 10:
+        url = f"https://www.cboe.com/us/futures/market_statistics/settlement/csv?dt={d.isoformat()}"
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                rows = list(csv.DictReader(io.TextIOWrapper(r, encoding="utf-8")))
+            m = {row["Expiration Date"]: float(row["Price"]) for row in rows
+                 if row.get("Product") == "VX" and row.get("Price")}
+            if m:
+                found.append(m)
+        except Exception:
+            pass
+        d -= timedelta(days=1)
+        tries += 1
+    if not found:
+        return {}
+    latest, prev = found[0], (found[1] if len(found) > 1 else {})
+    return {exp: (p, prev.get(exp)) for exp, p in latest.items()}
+
 MONTH_CODES = "FGHJKMNQUVXZ"  # янв..дек
 
 def cboe_vx_front2():
@@ -60,11 +87,12 @@ def cboe_vx_front2():
         m = (today.month - 1 + k) % 12
         y = today.year + (today.month - 1 + k) // 12
         sym = f"VX{MONTH_CODES[m]}{str(y)[2:]}"
-        url = f"https://cdn.cboe.com/api/global/delayed_quotes/quotes/{sym}.json"
+        url = f"https://cdn-api.cboe.com/api/global/delayed_quotes/quotes/{sym}.json"
         try:
             req = urllib.request.Request(url, headers=UA)
             with urllib.request.urlopen(req, timeout=20) as r:
-                d = json.load(r)["data"]
+                payload = json.load(r)
+                d = payload["data"]
         except Exception:
             continue
         exp = d.get("settlement_date", "")[:10]
@@ -73,16 +101,34 @@ def cboe_vx_front2():
         # ключи sym/prevClose/expiry — НЕ переименовывать в symbol/prev/exp:
         # ключ "exp" в JSON триггерит сканер безопасности вьюера claude.ai
         # (похож на JWT), и страница артефакта перестаёт рендериться
+        try:
+            qts = datetime.strptime(payload.get("timestamp", ""),
+                                    "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            fresh = (datetime.now(timezone.utc) - qts).total_seconds() < 30 * 3600
+        except Exception:
+            fresh = False
         out.append({
             "sym": sym,
             "price": d.get("current_price"),
             "prevClose": d.get("prev_day_close"),
             "expiry": exp,
+            "src": "live" if fresh else "stale",
         })
         if len(out) == 2:
             break
         time.sleep(0.3)
-    return out if len(out) == 2 else None
+    if len(out) != 2:
+        return None
+    # протухшие котировки заменяем вечерними сеттлментами
+    if any(c["src"] == "stale" for c in out):
+        settles = cboe_settlements()
+        for c in out:
+            if c["src"] == "stale" and c["expiry"] in settles:
+                p, prev = settles[c["expiry"]]
+                c["price"] = p
+                c["prevClose"] = prev if prev else p
+                c["src"] = "settle"
+    return out
 
 def sp500_tickers():
     """Состав S&P 500: кэш в sp500_tickers.json, обновление раз в 7 дней."""
