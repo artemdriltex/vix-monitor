@@ -34,7 +34,7 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ACTIONS_PAT || github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           git config user.name "vix-monitor-bot"

@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Перезапустить эстафету
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ACTIONS_PAT || github.token }}
           REPO: ${{ github.repository }}
         run: |
           echo "Упал ${{ github.event.workflow_run.name }} (${{ github.event.workflow_run.conclusion }}) — оживляю цепочку"

@@ -20,7 +20,7 @@ jobs:
     steps:
       - name: Сориентироваться и передать эстафету
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ACTIONS_PAT || github.token }}
           REPO: ${{ github.repository }}
         run: |
           # торговое окно: пн-пт 12:55–20:45 UTC
