@@ -342,7 +342,7 @@
     return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }); };
   let cols, contango, strength;
   if (vx) {
-    const vxTag = f => f.src === "settle" ? " (сеттл)" : "";
+    const vxTag = f => ({ settle: " (сеттл)", est: " (расч)", stale: " (⚠️уст.)" }[f.src] || "");
     cols = [["VIX", v0], [`VX1·${expLbl(vx[0].expiry)}${vxTag(vx[0])}`, vx[0].price],
             [`VX2·${expLbl(vx[1].expiry)}${vxTag(vx[1])}`, vx[1].price], ["VIX3M", v3]].filter(c => c[1] != null);
     contango = vx[1].price > vx[0].price;

@@ -52,30 +52,55 @@ def history(symbol: str, rng: str) -> list:
 
 def cboe_settlements():
     """Сеттлменты VX по датам экспирации: {expiry: (последний, предыдущий)}.
-    Запасной источник: фид котировок CBOE для дальних контрактов ломается
-    (окт 2026 — завис с 23 сент), а сеттлменты публикуются каждый вечер."""
+    Кэш в settles_cache.json: если CBOE недоступен (блокирует серверные IP),
+    берём последние удачно полученные значения, а не роняем данные."""
     import csv, io
+    cache_f = HERE / "settles_cache.json"
     found = []
     d = datetime.now(timezone.utc).date()
     tries = 0
-    while len(found) < 2 and tries < 10:
+    while len(found) < 4 and tries < 12:
         url = f"https://www.cboe.com/us/futures/market_statistics/settlement/csv?dt={d.isoformat()}"
-        try:
-            req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=20) as r:
-                rows = list(csv.DictReader(io.TextIOWrapper(r, encoding="utf-8")))
+        rows = None
+        for _attempt in range(3):  # Cloudflare капризничает — пробуем трижды
+            try:
+                req = urllib.request.Request(url, headers=UA)
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    rows = list(csv.DictReader(io.TextIOWrapper(r, encoding="utf-8")))
+                break
+            except Exception:
+                time.sleep(2)
+        if rows:
             m = {row["Expiration Date"]: float(row["Price"]) for row in rows
                  if row.get("Product") == "VX" and row.get("Price")}
             if m:
                 found.append(m)
-        except Exception:
-            pass
         d -= timedelta(days=1)
         tries += 1
-    if not found:
-        return {}
-    latest, prev = found[0], (found[1] if len(found) > 1 else {})
-    return {exp: (p, prev.get(exp)) for exp, p in latest.items()}
+    # по каждому контракту: самое свежее значение + предыдущее
+    # (дневной CSV за сегодня до вечера содержит только истёкшие контракты!)
+    if found:
+        result = {}
+        for m in found:  # от новых дней к старым
+            for exp, p in m.items():
+                if exp not in result:
+                    result[exp] = (p, None)
+                elif result[exp][1] is None:
+                    result[exp] = (result[exp][0], p)
+        result = {k: (v[0], v[1] if v[1] is not None else v[0]) for k, v in result.items()}
+        cache_f.write_text(json.dumps({
+            "fetched": datetime.now(timezone.utc).isoformat(),
+            "data": {k: list(v) for k, v in result.items()}}))
+        return result
+    # сеть не дала ничего — берём кэш
+    if cache_f.exists():
+        try:
+            cached = json.loads(cache_f.read_text())
+            print(f"warn: сеттлменты из кэша от {cached['fetched'][:16]}")
+            return {k: tuple(v) for k, v in cached["data"].items()}
+        except Exception:
+            pass
+    return {}
 
 MONTH_CODES = "FGHJKMNQUVXZ"  # янв..дек
 
@@ -128,6 +153,14 @@ def cboe_vx_front2():
                 c["price"] = p
                 c["prevClose"] = prev if prev else p
                 c["src"] = "settle"
+        # внутридневная корректировка: параллельный сдвиг кривой по живому VX1
+        vx1, vx2 = out[0], out[1]
+        if vx1["src"] == "live" and vx2["src"] == "settle":
+            s1 = settles.get(vx1["expiry"])
+            if s1 and s1[0]:
+                shift = vx1["price"] - s1[0]
+                vx2["price"] = round(vx2["price"] + shift, 2)
+                vx2["src"] = "est"
     return out
 
 def sp500_tickers():
