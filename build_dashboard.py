@@ -102,6 +102,30 @@ def cboe_settlements():
             pass
     return {}
 
+MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+def vixcentral_curve():
+    """Живая кривая VX-фьючерсов с volchart.io (экс-vixcentral): {"Oct": 17.7, ...}.
+    Основной источник: фид котировок CBOE стал ненадёжен (замирает на часы/дни)."""
+    for url in ("https://volchart.io/ajax_update", "http://vixcentral.com/ajax_update"):
+        for _attempt in range(2):
+            try:
+                req = urllib.request.Request(
+                    url, headers={**UA, "X-Requested-With": "XMLHttpRequest"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    arr = json.load(r)
+                months, last = arr[0], arr[2]  # ряд 2 = last price
+                out = {}
+                for m_name, price in zip(months, last):
+                    if isinstance(price, (int, float)) and 5 < price < 150:
+                        out[str(m_name)] = float(price)
+                if out:
+                    return out
+            except Exception:
+                time.sleep(1)
+    return None
+
 MONTH_CODES = "FGHJKMNQUVXZ"  # янв..дек
 
 def cboe_vx_front2():
@@ -161,6 +185,14 @@ def cboe_vx_front2():
                 shift = vx1["price"] - s1[0]
                 vx2["price"] = round(vx2["price"] + shift, 2)
                 vx2["src"] = "est"
+    # живая кривая vixcentral перекрывает всё (CBOE-фид замирает даже на фронте)
+    curve = vixcentral_curve()
+    if curve:
+        for c in out:
+            mon = MONTH_ABBR[int(c["expiry"][5:7]) - 1]
+            if mon in curve:
+                c["price"] = curve[mon]
+                c["src"] = "live"
     return out
 
 def sp500_tickers():

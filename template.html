@@ -678,12 +678,29 @@
                      SVIX: "SVIX", SPY: "SPY", ES: "ES=F", NQ: "NQ=F", BRENT: "BZ=F" };
     const jobs = Object.entries(symMap).map(([k, s]) =>
       yahooPrice(s).then(p => { if (DATA.quotes[k]) DATA.quotes[k].price = p; return 1; }).catch(() => 0));
-    (DATA.vx || []).forEach(f => jobs.push(
-      cboeQuote(f.sym).then(d => {
-        f.price = d.current_price;
-        if (typeof d.prev_day_close === "number") f.prevClose = d.prev_day_close;
-        return 1;
-      }).catch(() => 0)));
+    const monthAbbr = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    jobs.push((async () => {
+      try {  // основной: живая кривая vixcentral
+        const arr = await viaProxy("https://volchart.io/ajax_update");
+        const map = {};
+        arr[0].forEach((m, i) => { const p = arr[2][i]; if (typeof p === "number" && p > 5) map[m] = p; });
+        let n = 0;
+        (DATA.vx || []).forEach(f => {
+          const mon = monthAbbr[parseInt(f.expiry.slice(5, 7), 10) - 1];
+          if (map[mon]) { f.price = map[mon]; f.src = "live"; n = 1; }
+        });
+        if (n) return 1;
+        throw new Error("empty curve");
+      } catch (e) {  // запасной: котировки CBOE (если не протухли)
+        const rs = await Promise.all((DATA.vx || []).map(f =>
+          cboeQuote(f.sym).then(d => {
+            f.price = d.current_price; f.src = "live";
+            if (typeof d.prev_day_close === "number") f.prevClose = d.prev_day_close;
+            return 1;
+          }).catch(() => 0)));
+        return rs.some(x => x) ? 1 : 0;
+      }
+    })());
     const okCount = (await Promise.all(jobs)).reduce((a, b) => a + b, 0);
     if (okCount >= 3) {
       liveStamp = new Date();
