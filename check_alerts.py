@@ -86,17 +86,29 @@ def main():
         if 0 <= dd <= 1:
             upcoming.append((dd, e["label"]))
 
+    state_f = HERE / "alerts_state.json"
+    state = json.loads(state_f.read_text()) if state_f.exists() else {}
+
     triggered = []
     # --- декай по реальным VX1/VX2 (fallback — индексы VIX/VIX3M)
+    cont_now = None
     if vx:
         vx1, vx2 = vx[0], vx[1]
         cont_now = (vx2["price"] / vx1["price"] - 1) * 100
-        cont_prev = ((vx2["prevClose"] / vx1["prevClose"] - 1) * 100
-                     if vx1.get("prevClose") and vx2.get("prevClose") else None)
+        # прошлое значение: последний замер цикла (ловит развороты внутри дня),
+        # при первом запуске — вчерашние закрытия
+        cont_prev = state.get("last_contango")
+        if cont_prev is None and vx1.get("prevClose") and vx2.get("prevClose"):
+            cont_prev = (vx2["prevClose"] / vx1["prevClose"] - 1) * 100
         if cont_now <= 0 and (cont_prev is None or cont_prev > 0):
             triggered.append(f"ДЕКАЙ ОТРИЦАТЕЛЬНЫЙ: VX1/VX2 в бэквордации ({cont_now:+.1f}%) — шорт-вол не подходит")
         if 0 < cont_now < 5 and (cont_prev is None or cont_prev >= 5):
             triggered.append(f"Декай упал ниже лимита 5%: контанго VX1→VX2 всего {cont_now:+.1f}% — новые входы не подходят")
+        # возвраты — сигналы входа после стресса
+        if cont_now > 0 and cont_prev is not None and cont_prev <= 0:
+            triggered.append(f"КОНТАНГО ВОССТАНОВИЛОСЬ: VX1→VX2 {cont_now:+.1f}% — стресс уходит, ранний сигнал (вход по правилу — от +5%)")
+        if cont_now >= 5 and cont_prev is not None and cont_prev < 5:
+            triggered.append(f"ДЕКАЙ СНОВА ≥5%: контанго VX1→VX2 {cont_now:+.1f}% — декай платит, шорт-вол разрешён по правилу")
     elif v3 is not None:
         back_now = vix > v3
         back_prev = (vix_prev is not None and v3_prev is not None and vix_prev > v3_prev)
@@ -117,12 +129,13 @@ def main():
             triggered.append(f"Ширина рынка: S5TW {s5tw}% — выше 80%, зона перекупленности")
 
     # подавление повторов: один и тот же алерт не чаще раза в день
-    state_f = HERE / "alerts_state.json"
-    state = json.loads(state_f.read_text()) if state_f.exists() else {}
     tkey = today.isoformat()
+    akey = lambda t: t.split(":")[0].strip()  # тип алерта, без меняющихся цифр
     sent = set(state.get(tkey, []))
-    fresh = [t for t in triggered if t.split("—")[0].strip() not in sent]
-    state = {tkey: sorted(sent | {t.split("—")[0].strip() for t in triggered})}
+    fresh = [t for t in triggered if akey(t) not in sent]
+    state = {tkey: sorted(sent | {akey(t) for t in triggered})}
+    if cont_now is not None:
+        state["last_contango"] = round(cont_now, 3)
     state_f.write_text(json.dumps(state, ensure_ascii=False, indent=1))
 
     print(json.dumps({
