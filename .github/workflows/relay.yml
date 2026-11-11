@@ -23,22 +23,24 @@ jobs:
           GH_TOKEN: ${{ secrets.ACTIONS_PAT || github.token }}
           REPO: ${{ github.repository }}
         run: |
-          # торговое окно: пн-пт 12:55–20:45 UTC
+          # торговое окно: пн-пт 8:55–15:55 по Нью-Йорку (перевод часов учитывается сам)
           in_window() {
-            local dow=$(date -u +%u) hm=$(date -u +%H%M)
-            [ "$dow" -le 5 ] && [ "$hm" -ge 1255 ] && [ "$hm" -lt 2045 ]
+            local dow=$(TZ=America/New_York date +%u) hm=$((10#$(TZ=America/New_York date +%H%M)))
+            [ "$dow" -le 5 ] && [ "$hm" -ge 855 ] && [ "$hm" -lt 1555 ]
           }
-          next_open() {  # unix-время ближайшего открытия (12:55 UTC торгового дня)
+          next_open() {  # unix-время ближайшего открытия (8:55 ET торгового дня)
             python3 -c "
-          from datetime import datetime, timedelta, timezone
-          now = datetime.now(timezone.utc)
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          ny = ZoneInfo('America/New_York')
+          now = datetime.now(ny)
           d = now.date()
-          t = datetime(d.year, d.month, d.day, 12, 55, tzinfo=timezone.utc)
+          t = datetime(d.year, d.month, d.day, 8, 55, tzinfo=ny)
           if now >= t or d.weekday() > 4:
               d += timedelta(days=1)
               while d.weekday() > 4:
                   d += timedelta(days=1)
-              t = datetime(d.year, d.month, d.day, 12, 55, tzinfo=timezone.utc)
+              t = datetime(d.year, d.month, d.day, 8, 55, tzinfo=ny)
           print(int(t.timestamp()))"
           }
           if in_window; then

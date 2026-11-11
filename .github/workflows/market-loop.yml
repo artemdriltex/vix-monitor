@@ -7,8 +7,12 @@ on:
   schedule:
     - cron: "0 13 * * 1-5"    # утренняя смена (≈ 9:00 ET летом)
     - cron: "25 13 * * 1-5"   # запасной старт утренней
+    - cron: "0 14 * * 1-5"    # зимой (без DST) 9:00 ET
+    - cron: "25 14 * * 1-5"
     - cron: "0 17 * * 1-5"    # дневная смена
     - cron: "25 17 * * 1-5"   # запасной старт дневной
+    - cron: "0 18 * * 1-5"    # зимняя дневная смена
+    - cron: "25 18 * * 1-5"
   workflow_dispatch: {}
 
 permissions:
@@ -39,6 +43,8 @@ jobs:
         run: |
           git config user.name "vix-monitor-bot"
           git config user.email "bot@users.noreply.github.com"
+          START=$(date -u +%s)
+          et_hm() { echo $((10#$(TZ=America/New_York date +%H%M))); }
           while true; do
             echo "=== цикл $(date -u '+%H:%M UTC') ==="
             python3 check_alerts.py > alerts_out.json || true
@@ -49,11 +55,17 @@ jobs:
             git diff --cached --quiet || git commit -m "auto: refresh $(date -u '+%Y-%m-%d %H:%M UTC')"
             git pull --rebase origin main || git rebase --abort || true
             git push || true
-            # конец рабочего дня: 20:50 UTC (≈ 16:50 ET летом)
-            if [ "$(date -u +%H%M)" -ge 2050 ]; then
+            # конец рабочего дня: 16:05 по Нью-Йорку (перевод часов учитывается сам)
+            if [ "$(et_hm)" -ge 1605 ]; then
               echo "Сессия закончена, вахта снята."
               # эстафета сама вычислит следующее открытие
               gh workflow run relay --repo "$GH_REPO" && echo "Эстафета передана" || echo "Не удалось передать эстафету!"
+              break
+            fi
+            # лимит одной джобы GitHub — 6 ч: за ~40 мин до него передаём вахту новой смене
+            if [ $(( $(date -u +%s) - START )) -ge 19200 ]; then
+              echo "Смена у лимита времени — передаю вахту новой смене."
+              gh workflow run market-loop --repo "$GH_REPO" && echo "Новая смена вызвана" || echo "Не удалось вызвать новую смену!"
               break
             fi
             sleep 900
