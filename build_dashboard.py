@@ -169,6 +169,7 @@ def cboe_vx_front2():
     if len(out) != 2:
         return None
     # протухшие котировки заменяем вечерними сеттлментами
+    settles = {}
     if any(c["src"] == "stale" for c in out):
         settles = cboe_settlements()
         for c in out:
@@ -191,6 +192,10 @@ def cboe_vx_front2():
         for c in out:
             mon = MONTH_ABBR[int(c["expiry"][5:7]) - 1]
             if mon in curve:
+                # цена стала живой → «вчерашнее закрытие» = самый свежий сеттлмент,
+                # а не предпоследний (тот был парой к цене-сеттлменту)
+                if c["src"] in ("settle", "est") and c["expiry"] in settles:
+                    c["prevClose"] = settles[c["expiry"]][0]
                 c["price"] = curve[mon]
                 c["src"] = "live"
     return out
