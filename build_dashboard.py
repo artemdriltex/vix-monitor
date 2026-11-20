@@ -128,76 +128,105 @@ def vixcentral_curve():
 
 MONTH_CODES = "FGHJKMNQUVXZ"  # янв..дек
 
+def vx_expiry(year, month):
+    """Экспирация месячного VX: среда за 30 дней до третьей пятницы СЛЕДУЮЩЕГО месяца."""
+    y2, m2 = (year + 1, 1) if month == 12 else (year, month + 1)
+    first = datetime(y2, m2, 1).date()
+    first_fri = first + timedelta(days=(4 - first.weekday()) % 7)
+    return first_fri + timedelta(days=14) - timedelta(days=30)
+
+def cboe_quote(sym):
+    """Котировка CBOE (delayed): (data, fresh). Фид часто замирает и иногда отдаёт 403."""
+    url = f"https://cdn-api.cboe.com/api/global/delayed_quotes/quotes/{sym}.json"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/131.0 Safari/537.36"),
+        "Referer": "https://www.cboe.com/",
+        "Accept": "application/json,text/plain,*/*"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        payload = json.load(r)
+    try:
+        qts = datetime.strptime(payload.get("timestamp", ""),
+                                "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        fresh = (datetime.now(timezone.utc) - qts).total_seconds() < 30 * 3600
+    except Exception:
+        fresh = False
+    return payload["data"], fresh
+
 def cboe_vx_front2():
-    """Два ближайших VX-фьючерса с CBOE (delayed): VX1 и VX2."""
+    """Два ближайших VX-фьючерса: VX1 и VX2.
+    Контракты и даты экспирации считаются по календарному правилу и НЕ зависят
+    от сети (20 ноя 2026 CBOE начал отдавать 403 на котировки — и вся секция
+    фьючерсов пропадала). Цены: живая кривая → котировки CBOE → сеттлменты."""
     today = datetime.now(timezone.utc).date()
-    out = []
-    for k in range(4):
-        m = (today.month - 1 + k) % 12
-        y = today.year + (today.month - 1 + k) // 12
-        sym = f"VX{MONTH_CODES[m]}{str(y)[2:]}"
-        url = f"https://cdn-api.cboe.com/api/global/delayed_quotes/quotes/{sym}.json"
-        try:
-            req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=20) as r:
-                payload = json.load(r)
-                d = payload["data"]
-        except Exception:
-            continue
-        exp = d.get("settlement_date", "")[:10]
-        if not exp or datetime.strptime(exp, "%Y-%m-%d").date() <= today:
-            continue
-        # ключи sym/prevClose/expiry — НЕ переименовывать в symbol/prev/exp:
-        # ключ "exp" в JSON триггерит сканер безопасности вьюера claude.ai
-        # (похож на JWT), и страница артефакта перестаёт рендериться
-        try:
-            qts = datetime.strptime(payload.get("timestamp", ""),
-                                    "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            fresh = (datetime.now(timezone.utc) - qts).total_seconds() < 30 * 3600
-        except Exception:
-            fresh = False
-        out.append({
-            "sym": sym,
-            "price": d.get("current_price"),
-            "prevClose": d.get("prev_day_close"),
-            "expiry": exp,
-            "src": "live" if fresh else "stale",
-        })
-        if len(out) == 2:
-            break
-        time.sleep(0.3)
-    if len(out) != 2:
-        return None
-    # протухшие котировки заменяем вечерними сеттлментами
-    settles = {}
-    if any(c["src"] == "stale" for c in out):
+    try:
         settles = cboe_settlements()
-        for c in out:
-            if c["src"] == "stale" and c["expiry"] in settles:
-                p, prev = settles[c["expiry"]]
-                c["price"] = p
-                c["prevClose"] = prev if prev else p
-                c["src"] = "settle"
-        # внутридневная корректировка: параллельный сдвиг кривой по живому VX1
-        vx1, vx2 = out[0], out[1]
-        if vx1["src"] == "live" and vx2["src"] == "settle":
-            s1 = settles.get(vx1["expiry"])
-            if s1 and s1[0]:
-                shift = vx1["price"] - s1[0]
-                vx2["price"] = round(vx2["price"] + shift, 2)
-                vx2["src"] = "est"
-    # живая кривая vixcentral перекрывает всё (CBOE-фид замирает даже на фронте)
+    except Exception:
+        settles = {}
+    pairs = []
+    for k in range(4):
+        m0 = today.month - 1 + k
+        y, m = today.year + m0 // 12, m0 % 12 + 1
+        exp = vx_expiry(y, m)
+        # праздничный сдвиг экспирации: верим дате из сеттлментов CBOE, если она рядом
+        for delta in (0, -1, -2, 1):
+            alt = exp + timedelta(days=delta)
+            if alt.isoformat() in settles:
+                exp = alt
+                break
+        if exp > today:
+            pairs.append((exp, f"VX{MONTH_CODES[m - 1]}{str(y)[2:]}"))
+        if len(pairs) == 2:
+            break
+    if len(pairs) != 2:
+        return None
+    # ключи sym/prevClose/expiry — НЕ переименовывать в symbol/prev/exp:
+    # ключ "exp" в JSON триггерит сканер безопасности вьюера claude.ai
+    # (похож на JWT), и страница артефакта перестаёт рендериться
     curve = vixcentral_curve()
-    if curve:
-        for c in out:
-            mon = MONTH_ABBR[int(c["expiry"][5:7]) - 1]
-            if mon in curve:
-                # цена стала живой → «вчерашнее закрытие» = самый свежий сеттлмент,
-                # а не предпоследний (тот был парой к цене-сеттлменту)
-                if c["src"] in ("settle", "est") and c["expiry"] in settles:
-                    c["prevClose"] = settles[c["expiry"]][0]
-                c["price"] = curve[mon]
+    out = []
+    for exp, sym in pairs:
+        iso = exp.isoformat()
+        c = {"sym": sym, "price": None, "prevClose": None, "expiry": iso, "src": "stale"}
+        mon = MONTH_ABBR[exp.month - 1]
+        if curve and mon in curve:
+            # цена живая → «вчерашнее закрытие» = самый свежий сеттлмент
+            c["price"] = curve[mon]
+            c["src"] = "live"
+            if iso in settles:
+                c["prevClose"] = settles[iso][0]
+        out.append(c)
+    # запасной источник: котировки CBOE (только если не протухли)
+    for c in out:
+        if c["price"] is not None and c["prevClose"] is not None:
+            continue
+        try:
+            d, fresh = cboe_quote(c["sym"])
+        except Exception:
+            d, fresh = None, False
+        if d and fresh:
+            if c["price"] is None and d.get("current_price"):
+                c["price"] = d["current_price"]
                 c["src"] = "live"
+            if c["prevClose"] is None and d.get("prev_day_close"):
+                c["prevClose"] = d["prev_day_close"]
+        time.sleep(0.3)
+    # последний рубеж: вечерние сеттлменты
+    for c in out:
+        if c["price"] is None and c["expiry"] in settles:
+            p, prev = settles[c["expiry"]]
+            c["price"] = p
+            c["prevClose"] = prev if prev else p
+            c["src"] = "settle"
+    # внутридневная корректировка: параллельный сдвиг кривой по живому VX1
+    vx1, vx2 = out[0], out[1]
+    if vx1["src"] == "live" and vx2["src"] == "settle":
+        s1 = settles.get(vx1["expiry"])
+        if s1 and s1[0]:
+            vx2["price"] = round(vx2["price"] + (vx1["price"] - s1[0]), 2)
+            vx2["src"] = "est"
+    if any(c["price"] is None for c in out):
+        return None
     return out
 
 def sp500_tickers():

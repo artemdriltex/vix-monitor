@@ -133,9 +133,13 @@ def main():
     akey = lambda t: t.split(":")[0].strip()  # тип алерта, без меняющихся цифр
     sent = set(state.get(tkey, []))
     fresh = [t for t in triggered if akey(t) not in sent]
+    last_cont = state.get("last_contango")
     state = {tkey: sorted(sent | {akey(t) for t in triggered})}
     if cont_now is not None:
         state["last_contango"] = round(cont_now, 3)
+    elif last_cont is not None:
+        # фьючерсы временно недоступны — не теряем последний замер
+        state["last_contango"] = last_cont
     state_f.write_text(json.dumps(state, ensure_ascii=False, indent=1))
 
     print(json.dumps({
